@@ -1,0 +1,4 @@
+{
+  "python.analysis.extraPaths": ["./scaleout-client-python/examples/server-functions", 
+  "./scaleout-client-python/examples/server-functions/client"]
+}

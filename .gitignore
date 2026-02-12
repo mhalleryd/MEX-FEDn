@@ -1,0 +1,11 @@
+!scaleout-client-python/
+scaleout-client-python/*
+!scaleout-client-python/examples/
+scaleout-client-python/examples/*
+!scaleout-client-python/examples/Max-Imagenette
+
+scaleout-utils/*
+.venv/*
+
+max_data/
+__pycache__/
