@@ -60,8 +60,7 @@ class MyClient:
         data_path=None,
         batch_size=32,
         epochs=1,
-        x_train = None,
-        y_train = None
+        data_loader=None
     ):
         """Complete a model update.
 
@@ -83,8 +82,8 @@ class MyClient:
 
         # Load data
         #x_train, y_train = load_data(data_path)
-        x_train = x_train.to(self.device)
-        y_train = y_train.to(self.device).long()
+        # x_train = x_train.to(self.device)
+        # y_train = y_train.to(self.device).long()
 
         # Load model
         model = load_parameters(scaleout_model)
@@ -95,8 +94,8 @@ class MyClient:
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
         criterion = torch.nn.NLLLoss()
 
-        n_samples = x_train.shape[0]
-        n_batches = int(math.ceil(n_samples / batch_size))
+        n_samples = len(data_loader.dataset)
+        n_batches = len(data_loader)
 
 
         for epoch in range(epochs):
@@ -104,12 +103,12 @@ class MyClient:
             correct = 0
             total = 0
 
-            for b in range(n_batches):
+            for b, (batch_x, batch_y) in enumerate(data_loader):
                 # Regularly check if task is aborted
                 self.client.check_task_abort()
 
-                batch_x = x_train[b * batch_size : (b + 1) * batch_size]
-                batch_y = y_train[b * batch_size : (b + 1) * batch_size]
+                #batch_x = x_train[b * batch_size : (b + 1) * batch_size]
+                #batch_y = y_train[b * batch_size : (b + 1) * batch_size]
 
                 optimizer.zero_grad()
                 outputs = model(batch_x)

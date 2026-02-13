@@ -3,6 +3,8 @@ from math import floor
 
 import torch
 import torchvision
+from torchvision import datasets
+from torchvision.models import ConvNeXt_Tiny_Weights
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 abs_path = os.path.abspath(dir_path)
@@ -45,26 +47,30 @@ def load_data(data_path=None, is_train=True):
     :return: Tuple of data and labels.
     :rtype: tuple
     """
-    if data_path is None:
-        data_path = os.environ.get(
-            "SCALEOUT_DATA_PATH",
-            os.path.join(OUT_DIR, "clients", "1", "mnist.pt"),
-        )
 
-    # weights_only=True requires PyTorch 2.0+; if you need legacy support, drop it.
-    data = torch.load(data_path, weights_only=True)
+    weights = ConvNeXt_Tiny_Weights.DEFAULT
+
+    train_transform = weights.transforms()
+    val_transform = weights.transforms()
 
     if is_train:
-        X = data["x_train"]
-        y = data["y_train"]
+        ds = datasets.Imagenette(
+            root=data_path,
+            split="train",
+            download=True,
+            transform=train_transform,
+            size='160px'
+        )
     else:
-        X = data["x_test"]
-        y = data["y_test"]
+        ds = datasets.Imagenette(
+            root=data_path,
+            split="val",
+            download=True,
+            transform=val_transform,
+            size='160px'
+        )
 
-    # Normalize
-    X = X / 255.0
-
-    return X, y
+    return ds
 
 
 def splitset(dataset, parts):
