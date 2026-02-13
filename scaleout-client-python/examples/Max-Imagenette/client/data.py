@@ -37,7 +37,7 @@ def get_data(out_dir=OUT_DIR):
         )
 
 
-def load_data(data_path=None, is_train=True):
+def load_data(data_path=None, is_train=True, download=False):
     """Load data from disk.
 
     :param data_path: Path to data file.
@@ -57,7 +57,7 @@ def load_data(data_path=None, is_train=True):
         ds = datasets.Imagenette(
             root=data_path,
             split="train",
-            download=True,
+            download=download,
             transform=train_transform,
             size='160px'
         )
@@ -65,7 +65,7 @@ def load_data(data_path=None, is_train=True):
         ds = datasets.Imagenette(
             root=data_path,
             split="val",
-            download=True,
+            download=download,
             transform=val_transform,
             size='160px'
         )

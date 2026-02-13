@@ -79,6 +79,66 @@ class MyClient:
         :param epochs: The number of epochs to train.
         :type epochs: int
         """
+        @torch.no_grad()
+        def frobenius_norm(global_model, local_model):
+            """
+            Returns Frobenius norm of the difference between local model and global model.
+            
+            :param global_model: Global model from server
+            :param local_model: local model after training on client data
+            """
+            total = 0.0
+
+            for p_global, p_local in zip(global_model.parameters(), local_model.parameters()):
+                if p_local.requires_grad:
+                    total += torch.sum((p_local - p_global).float() ** 2)
+
+            return total
+        
+        def estimate_fisher(model, loader, criterion):
+            fisher = {n: torch.zeros_like(p)
+                    for n, p in model.named_parameters()
+                    if p.requires_grad}
+
+            model.eval()
+
+            for x, y in loader:
+                x, y = x.to(self.device), y.to(self.device)
+
+                model.zero_grad()
+                output = model(x)
+                loss = criterion(output, y)
+                loss.backward()
+
+                for n, p in model.named_parameters():
+                    if p.grad is not None:
+                        fisher[n] += p.grad.detach()**2
+
+            for n in fisher:
+                fisher[n] /= len(loader)
+
+            return fisher
+        
+
+        def accumulate_gradients(model, data_loader, criterion):
+            
+            def get_flat_grad(model):
+                grads = []
+                for p in model.parameters():
+                    if p.grad is not None:
+                        grads.append(p.grad.detach().view(-1))
+                return torch.cat(grads)
+
+
+            model.zero_grad()
+
+            for batch_x, batch_y in data_loader:
+                outputs = model(batch_x)
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+
+            return get_flat_grad(model)
+
 
         # Load data
         #x_train, y_train = load_data(data_path)
@@ -94,6 +154,9 @@ class MyClient:
         optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
         criterion = torch.nn.CrossEntropyLoss()
         #criterion = torch.nn.NLLLoss()
+        
+        #Compute gradient for global model on local data
+        global_gradient = accumulate_gradients(model, data_loader, criterion)
 
         n_samples = len(data_loader.dataset)
         n_batches = len(data_loader)
@@ -141,10 +204,19 @@ class MyClient:
                 }
             )
 
+            norm = frobenius_norm(global_model=load_parameters(scaleout_model).to(self.device), local_model=model)
+
+            fisher_diag = estimate_fisher(model, data_loader, criterion)
+
+            local_gradient = accumulate_gradients(model, data_loader, criterion)
             #Max metrics för att se lokalt
             metrics = {
                     "training_loss": float(epoch_loss),
                     "training_accuracy": float(epoch_acc),
+                    "norm": norm,
+                    "fisher": fisher_diag,
+                    "local_grad": local_gradient,
+                    "global_grad": global_gradient,
                 }
             
             print(
