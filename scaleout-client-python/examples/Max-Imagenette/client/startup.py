@@ -91,8 +91,9 @@ class MyClient:
         model.train()
         lr = settings["learning_rate"]
 
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-        criterion = torch.nn.NLLLoss()
+        optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+        criterion = torch.nn.CrossEntropyLoss()
+        #criterion = torch.nn.NLLLoss()
 
         n_samples = len(data_loader.dataset)
         n_batches = len(data_loader)
