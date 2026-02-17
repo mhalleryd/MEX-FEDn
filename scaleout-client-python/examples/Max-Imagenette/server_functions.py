@@ -45,6 +45,19 @@ class ServerFunctions(ServerFunctionsBase):
             print(f"Selected {len(selected)} clients.")
         print(f"{charging_count} clients selected based on client attributes, out of {len(client_ids)} clients.")
         return selected
+    
+    # def client_selection(self, client_ids: list[str], round_type: RoundType, clients, threshold) -> list[str]:
+    #     if round_type == RoundType.PREDICTION:
+    #         return client_ids
+    #     selected = []
+    #     for cid in client_ids:
+    #         client = clients[cid]
+    #         print(f"Client {cid} has drift {client.drift}")
+    #         if client.drift is None:
+    #             selected.append(cid)
+    #         elif client.drift < threshold: # if no drift value, include client by default
+    #             selected.append(cid)
+    #     return selected
 
     # Called secondly before sending the global model.
     def client_settings(self, global_model: List[np.ndarray]) -> dict:

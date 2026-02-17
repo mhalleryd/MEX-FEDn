@@ -29,6 +29,7 @@ class MyClient:
     def __init__(self, client: EdgeClient):
         self.client = client
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.drift = None
 
         client.set_train_callback(self.train)
         client.set_validate_callback(self.validate)
@@ -129,15 +130,24 @@ class MyClient:
                         grads.append(p.grad.detach().view(-1))
                 return torch.cat(grads)
 
-
+            all_outs = []
             model.zero_grad()
 
             for batch_x, batch_y in data_loader:
                 outputs = model(batch_x)
+                all_outs.append(outputs)
                 loss = criterion(outputs, batch_y)
                 loss.backward()
 
-            return get_flat_grad(model)
+            return get_flat_grad(model), torch.cat(all_outs, dim=0)
+        
+        @torch.no_grad()
+        def weight_cosine_sim(global_model, local_model):
+            global_weights = torch.nn.utils.parameters_to_vector(global_model.parameters())
+            local_weights = torch.nn.utils.parameters_to_vector(local_model.parameters())
+
+            sim = torch.nn.functional.cosine_similarity(local_weights, global_weights, dim=0)
+            return sim.item()
 
 
         # Load data
@@ -154,9 +164,9 @@ class MyClient:
         optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
         criterion = torch.nn.CrossEntropyLoss()
         #criterion = torch.nn.NLLLoss()
-        
+
         #Compute gradient for global model on local data
-        global_gradient = accumulate_gradients(model, data_loader, criterion)
+        global_gradient, all_outs_global = accumulate_gradients(model, data_loader, criterion)
 
         n_samples = len(data_loader.dataset)
         n_batches = len(data_loader)
@@ -166,7 +176,8 @@ class MyClient:
             running_loss = 0.0
             correct = 0
             total = 0
-
+            
+            #all_outs = torch.zeros_like(n_batches)
             for b, (batch_x, batch_y) in enumerate(data_loader):
                 # Regularly check if task is aborted
                 self.client.check_task_abort()
@@ -176,6 +187,8 @@ class MyClient:
 
                 optimizer.zero_grad()
                 outputs = model(batch_x)
+                #all_outs[b] = outputs
+
                 loss = criterion(outputs, batch_y)
                 loss.backward()
                 optimizer.step()
@@ -203,12 +216,21 @@ class MyClient:
                     "training_accuracy": float(epoch_acc),
                 }
             )
-
-            norm = frobenius_norm(global_model=load_parameters(scaleout_model).to(self.device), local_model=model)
+            #Get global model
+            global_model = load_parameters(scaleout_model).to(self.device)
+            
+            #Metrics
+            norm = frobenius_norm(global_model=global_model, local_model=model)
 
             fisher_diag = estimate_fisher(model, data_loader, criterion)
 
-            local_gradient = accumulate_gradients(model, data_loader, criterion)
+            local_gradient, all_outs_local = accumulate_gradients(model, data_loader, criterion)
+
+            feature_drift = torch.sum((all_outs_local - all_outs_global)**2).item()
+
+            sim = weight_cosine_sim(global_model, model)
+
+            self.drift = torch.linalg.vector_norm(local_gradient - global_gradient).item()
             #Max metrics för att se lokalt
             metrics = {
                     "training_loss": float(epoch_loss),
@@ -217,6 +239,8 @@ class MyClient:
                     "fisher": fisher_diag,
                     "local_grad": local_gradient,
                     "global_grad": global_gradient,
+                    "weight_cosine_sim": sim,
+                    "feature_drift": feature_drift
                 }
             
             print(
