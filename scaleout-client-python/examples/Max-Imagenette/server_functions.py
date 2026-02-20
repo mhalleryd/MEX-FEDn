@@ -46,18 +46,18 @@ class ServerFunctions(ServerFunctionsBase):
         print(f"{charging_count} clients selected based on client attributes, out of {len(client_ids)} clients.")
         return selected
     
-    # def client_selection(self, client_ids: list[str], round_type: RoundType, clients, threshold) -> list[str]:
-    #     if round_type == RoundType.PREDICTION:
-    #         return client_ids
-    #     selected = []
-    #     for cid in client_ids:
-    #         client = clients[cid]
-    #         print(f"Client {cid} has drift {client.drift}")
-    #         if client.drift is None:
-    #             selected.append(cid)
-    #         elif client.drift < threshold: # if no drift value, include client by default
-    #             selected.append(cid)
-    #     return selected
+    def adaptive_client_selection(self, client_ids: list[str], round_type: RoundType, clients, threshold) -> list[str]:
+        if round_type == RoundType.PREDICTION:
+            return client_ids
+        selected = []
+        for cid in client_ids:
+            client = clients[cid]
+            print(f"Client {cid} has metric {client.metric}")
+            if client.metric is None:
+                selected.append(cid)
+            elif client.metric < threshold: # if no metric value, include client by default
+                selected.append(cid)
+        return selected
 
     # Called secondly before sending the global model.
     def client_settings(self, global_model: List[np.ndarray]) -> dict:
@@ -81,6 +81,36 @@ class ServerFunctions(ServerFunctionsBase):
             total_weight += num_examples
             for i in range(len(weighted_sum)):
                 weighted_sum[i] += client_parameters[i] * num_examples
+
+        print("Models aggregated")
+        averaged_updates = [weighted / total_weight for weighted in weighted_sum]
+        return averaged_updates
+    
+    def adaptive_aggregate(self, previous_global: List[np.ndarray], client_updates: Dict[str, Tuple[List[np.ndarray], dict]], threshold, choice) -> List[np.ndarray]:
+        import torch
+        weighted_sum = [np.zeros_like(param) for param in previous_global]
+        total_weight = 0
+        for client_id, (client_parameters, metadata) in client_updates.items():
+            
+            if choice == 'grad-diff':
+                g_global = metadata.get('global_grad')
+                g_local = metadata.get('local_grad')
+
+                norm = torch.linalg.vector_norm(g_local - g_global, dim=0).item()
+
+                total_weight += norm
+
+                for i in range(len(weighted_sum)):
+                    weighted_sum[i] += client_parameters[i] * norm
+
+
+            if choice == 'cosine-sim':
+
+                total_weight += (1 - metadata.get("metric", 0) )# use metric as weight instead of num examples
+
+                for i in range(len(weighted_sum)):
+                    weighted_sum[i] += client_parameters[i] * (1 - metadata.get("metric", 0))
+
 
         print("Models aggregated")
         averaged_updates = [weighted / total_weight for weighted in weighted_sum]

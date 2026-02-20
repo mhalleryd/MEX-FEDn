@@ -29,7 +29,7 @@ class MyClient:
     def __init__(self, client: EdgeClient):
         self.client = client
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.drift = None
+        self.metric = None
 
         client.set_train_callback(self.train)
         client.set_validate_callback(self.validate)
@@ -94,7 +94,7 @@ class MyClient:
                 if p_local.requires_grad:
                     total += torch.sum((p_local - p_global).float() ** 2)
 
-            return total
+            return total.detach().item()
         
         def estimate_fisher(model, loader, criterion):
             fisher = {n: torch.zeros_like(p)
@@ -104,9 +104,9 @@ class MyClient:
             model.eval()
 
             for x, y in loader:
-                x, y = x.to(self.device), y.to(self.device)
+                x, y = x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
 
-                model.zero_grad()
+                model.zero_grad(set_to_none=True)
                 output = model(x)
                 loss = criterion(output, y)
                 loss.backward()
@@ -121,23 +121,27 @@ class MyClient:
             return fisher
         
 
-        def accumulate_gradients(model, data_loader, criterion):
-            
-            def get_flat_grad(model):
+        def get_flat_grad(model):
                 grads = []
                 for p in model.parameters():
                     if p.grad is not None:
                         grads.append(p.grad.detach().view(-1))
                 return torch.cat(grads)
+        
+        def accumulate_gradients(model, data_loader, criterion):
 
+            model.zero_grad(set_to_none=True)
             all_outs = []
-            model.zero_grad()
 
-            for batch_x, batch_y in data_loader:
-                outputs = model(batch_x)
-                all_outs.append(outputs)
-                loss = criterion(outputs, batch_y)
+            for x, y in data_loader:
+                x = x.to(self.device, non_blocking=True)
+                y = y.to(self.device, non_blocking=True)
+
+                outputs = model(x)
+                loss = criterion(outputs, y)
+
                 loss.backward()
+                all_outs.append(outputs.detach())  # prevent graph buildup
 
             return get_flat_grad(model), torch.cat(all_outs, dim=0)
         
@@ -150,10 +154,6 @@ class MyClient:
             return sim.item()
 
 
-        # Load data
-        #x_train, y_train = load_data(data_path)
-        # x_train = x_train.to(self.device)
-        # y_train = y_train.to(self.device).long()
 
         # Load model
         model = load_parameters(scaleout_model)
@@ -170,7 +170,7 @@ class MyClient:
 
         n_samples = len(data_loader.dataset)
         n_batches = len(data_loader)
-
+        all_outs_local = []
 
         for epoch in range(epochs):
             running_loss = 0.0
@@ -178,26 +178,26 @@ class MyClient:
             total = 0
             
             #all_outs = torch.zeros_like(n_batches)
-            for b, (batch_x, batch_y) in enumerate(data_loader):
+            for b, (x, y) in enumerate(data_loader):
+                x, y = x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                 # Regularly check if task is aborted
                 self.client.check_task_abort()
 
-                #batch_x = x_train[b * batch_size : (b + 1) * batch_size]
-                #batch_y = y_train[b * batch_size : (b + 1) * batch_size]
 
-                optimizer.zero_grad()
-                outputs = model(batch_x)
-                #all_outs[b] = outputs
+                optimizer.zero_grad(set_to_none=True)
+                outputs = model(x)
 
-                loss = criterion(outputs, batch_y)
+                loss = criterion(outputs, y)
                 loss.backward()
+
+                all_outs_local.append(outputs.detach())
                 optimizer.step()
 
-                running_loss += loss.item() * batch_x.size(0)
+                running_loss += loss.item() * x.size(0)
 
                 preds = torch.argmax(outputs, dim=1)
-                correct += (preds == batch_y).sum().item()
-                total += batch_x.size(0)
+                correct += (preds == y).sum().item()
+                total += x.size(0)
 
                 if b % 100 == 0:
                     print(
@@ -216,27 +216,31 @@ class MyClient:
                     "training_accuracy": float(epoch_acc),
                 }
             )
+
+            #Get all metrics
+            local_gradient = get_flat_grad(model)
+            all_outs_local = torch.cat(all_outs_local, dim=0)
+
             #Get global model
             global_model = load_parameters(scaleout_model).to(self.device)
             
-            #Metrics
             norm = frobenius_norm(global_model=global_model, local_model=model)
 
-            fisher_diag = estimate_fisher(model, data_loader, criterion)
+            #fisher_diag = estimate_fisher(model, data_loader, criterion)
 
-            local_gradient, all_outs_local = accumulate_gradients(model, data_loader, criterion)
+            #local_gradient, all_outs_local = accumulate_gradients(model, data_loader, criterion)
 
             feature_drift = torch.sum((all_outs_local - all_outs_global)**2).item()
 
             sim = weight_cosine_sim(global_model, model)
 
-            self.drift = torch.linalg.vector_norm(local_gradient - global_gradient).item()
+            self.metric = sim #torch.linalg.vector_norm(local_gradient - global_gradient).item()
             #Max metrics för att se lokalt
             metrics = {
                     "training_loss": float(epoch_loss),
                     "training_accuracy": float(epoch_acc),
                     "norm": norm,
-                    "fisher": fisher_diag,
+                    #"fisher": fisher_diag,
                     "local_grad": local_gradient,
                     "global_grad": global_gradient,
                     "weight_cosine_sim": sim,
@@ -254,11 +258,19 @@ class MyClient:
             "batch_size": int(batch_size),
             "epochs": int(epochs),
             "lr": float(lr),
+            "metric": float(self.metric),
+            "training_loss": float(epoch_loss),
+            "training_accuracy": float(epoch_acc),
+            "norm": norm,
+            "local_grad": local_gradient,
+            "global_grad": global_gradient,
+            "weight_cosine_sim": sim,
+            "feature_drift": feature_drift
         }
-
+        print(self.metric)
         # Save model update (mandatory)
         result_model = save_parameters(model)
-        return result_model, {"training_metadata": metadata}, metrics
+        return result_model, metadata, metrics
 
     def validate(self, scaleout_model: ScaleoutModel, data_path=None):
         """Validate model.
