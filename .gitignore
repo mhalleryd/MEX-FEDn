@@ -4,7 +4,8 @@ scaleout-client-python/*
 scaleout-client-python/examples/*
 !scaleout-client-python/examples/Max-Imagenette
 
-scaleout-utils/*
+scaleout-util
+#scaleout-utils/*
 .venv/*
 
 max_data/
