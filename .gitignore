@@ -5,7 +5,6 @@ scaleout-client-python/examples/*
 !scaleout-client-python/examples/Max-Imagenette
 
 scaleout-util
-#scaleout-utils/*
 .venv/*
 
 max_data/
