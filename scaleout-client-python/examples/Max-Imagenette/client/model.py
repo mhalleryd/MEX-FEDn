@@ -29,28 +29,28 @@ class Net(nn.Module):
         return x
 
 
-# def compile_model():
-#     """Compile the PyTorch model.
-
-#     :return: The compiled model.
-#     :rtype: torch.nn.Module
-#     """
-#     return Net()
-
 def compile_model():
     """Compile the PyTorch model.
 
     :return: The compiled model.
     :rtype: torch.nn.Module
     """
-    m = convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
+    return Net()
 
-    for p in m.parameters():
-       p.requires_grad = False
+# def compile_model():
+#     """Compile the PyTorch model.
 
-    in_features = m.classifier[2].in_features
-    m.classifier[2] = nn.Linear(in_features, 10)
-    return m
+#     :return: The compiled model.
+#     :rtype: torch.nn.Module
+#     """
+#     m = convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
+
+#     for p in m.parameters():
+#        p.requires_grad = False
+
+#     in_features = m.classifier[2].in_features
+#     m.classifier[2] = nn.Linear(in_features, 10)
+#     return m
 
 
 

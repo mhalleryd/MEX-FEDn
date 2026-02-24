@@ -46,18 +46,17 @@ class ServerFunctions(ServerFunctionsBase):
         print(f"{charging_count} clients selected based on client attributes, out of {len(client_ids)} clients.")
         return selected
     
-    def adaptive_client_selection(self, client_ids: list[str], round_type: RoundType, clients, threshold) -> list[str]:
+    def adaptive_client_selection(self, client_ids: list[str], round_type: RoundType, clients) -> list[str]:
         if round_type == RoundType.PREDICTION:
             return client_ids
-        selected = []
-        for cid in client_ids:
-            client = clients[cid]
-            print(f"Client {cid} has metric {client.metric}")
-            if client.metric is None:
-                selected.append(cid)
-            elif client.metric < threshold: # if no metric value, include client by default
-                selected.append(cid)
-        return selected
+        
+        metrics = [clients[id].metric for id in client_ids]
+        if None in metrics:
+            print("No client metrics found, selecting all clients.")
+            return client_ids
+        selected = np.argsort(metrics)
+
+        return selected[:3] #Sort by metrics, lowest first
 
     # Called secondly before sending the global model.
     def client_settings(self, global_model: List[np.ndarray]) -> dict:
@@ -86,32 +85,62 @@ class ServerFunctions(ServerFunctionsBase):
         averaged_updates = [weighted / total_weight for weighted in weighted_sum]
         return averaged_updates
     
-    def adaptive_aggregate(self, previous_global: List[np.ndarray], client_updates: Dict[str, Tuple[List[np.ndarray], dict]], threshold, choice) -> List[np.ndarray]:
-        import torch
-        weighted_sum = [np.zeros_like(param) for param in previous_global]
-        total_weight = 0
-        for client_id, (client_parameters, metadata) in client_updates.items():
+    # def adaptive_aggregate(self, previous_global: List[np.ndarray], client_updates: Dict[str, Tuple[List[np.ndarray], dict]], threshold, choice) -> List[np.ndarray]:
+    #     import torch
+    #     weighted_sum = [np.zeros_like(param) for param in previous_global]
+    #     total_weight = 0
+    #     for client_id, (client_parameters, metadata) in client_updates.items():
             
+    #         if choice == 'grad-diff':
+    #             g_global = metadata.get('global_grad')
+    #             g_local = metadata.get('local_grad')
+
+    #             norm = torch.linalg.vector_norm(g_local - g_global, dim=0).item()
+
+    #             total_weight += norm
+
+    #             for i in range(len(weighted_sum)):
+    #                 weighted_sum[i] += client_parameters[i] * norm
+
+
+    #         if choice == 'cosine-sim':
+
+    #             total_weight += (1 - metadata.get("metric", 0) )# use metric as weight instead of num examples
+
+    #             for i in range(len(weighted_sum)):
+    #                 weighted_sum[i] += client_parameters[i] * (1 - metadata.get("metric", 0))
+
+
+    #     print("Models aggregated")
+    #     averaged_updates = [weighted / total_weight for weighted in weighted_sum]
+    #     return averaged_updates
+
+
+    def adaptive_aggregate(self, previous_global, client_updates, threshold, choice):
+        import torch
+        weighted_sum = [np.zeros_like(p) for p in previous_global]
+        total_weight = 0.0
+
+        for client_id, (client_parameters, metadata) in client_updates.items():
+
             if choice == 'grad-diff':
-                g_global = metadata.get('global_grad')
-                g_local = metadata.get('local_grad')
+                g_global = metadata['global_grad']
+                g_local = metadata['local_grad']
 
-                norm = torch.linalg.vector_norm(g_local - g_global, dim=0).item()
+                weight = torch.linalg.vector_norm(g_local - g_global)
+                weight = weight.detach()
 
-                total_weight += norm
+            elif choice == 'cosine-sim':
+                metric = metadata.get("metric", 0)
+                weight = 1 - metric
 
-                for i in range(len(weighted_sum)):
-                    weighted_sum[i] += client_parameters[i] * norm
+            else:
+                raise ValueError("Unknown choice")
 
+            total_weight += weight
 
-            if choice == 'cosine-sim':
+            for i, param in enumerate(client_parameters):
+                weighted_sum[i] += param * weight
 
-                total_weight += (1 - metadata.get("metric", 0) )# use metric as weight instead of num examples
-
-                for i in range(len(weighted_sum)):
-                    weighted_sum[i] += client_parameters[i] * (1 - metadata.get("metric", 0))
-
-
-        print("Models aggregated")
-        averaged_updates = [weighted / total_weight for weighted in weighted_sum]
-        return averaged_updates
+        averaged = [w / total_weight for w in weighted_sum]
+        return averaged

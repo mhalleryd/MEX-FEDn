@@ -54,6 +54,11 @@ class MyClient:
 
             time.sleep(30)
 
+    def ping(self, scaleout_model: ScaleoutModel):
+        pass
+
+
+
     def train(
         self,
         scaleout_model: ScaleoutModel,
